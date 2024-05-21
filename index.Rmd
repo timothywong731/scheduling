@@ -1,8 +1,8 @@
 ---
-title: "Job Scheduling for Multiple Engineers"
+title: " Linear Programming for Route Planning and Job Scheduling"
 author: Timothy Wong^[timothy.wong@hotmail.co.uk]
 output: html_document
-date: "2022-02-16"
+date: "2024-05-21"
 header-includes:
    - \usepackage{amsmath}
 ---
@@ -11,9 +11,9 @@ header-includes:
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-# Objectives
+# Abstract
 
-With multiple engineers and multiple jobs, the objective is to optimise the travel routes whilst satisfying constraints.
+Efficiently managing travel and job scheduling for multiple resources across various locations presents a significant operational challenge. This tutorial showcases a Linear Programming (LP) model designed to optimise route planning and job allocation among travelling agents, aiming to minimise travel time and adhere to individual working hours constraints. Utilising variables such as travel costs, job durations, and agent capacities, we construct a mathematical framework that accommodates each agent's starting location and individual contractual obligations. The methodology employs the `MILPModel` in R, leveraging the `symphony` solver to identify optimal scheduling solutions. Experimental results, visualised through Gantt charts and geographical plotting, demonstrate the model's efficacy in reducing total travel time while ensuring feasible workload distribution. This approach not only enhances operational efficiency but also contributes to the broader field of operations research by providing a scalable solution for multi-location, multi-personnel scheduling problems.
 
 ```{r, message=FALSE, warning=FALSE}
 library(knitr)
@@ -23,7 +23,6 @@ library(ompr)
 library(ompr.roi)
 library(ROI)
 library(ROI.plugin.glpk)
-#library(ROI.plugin.cbc)
 library(ROI.plugin.symphony)
 library(igraph)
 library(ggplot2)
@@ -36,7 +35,7 @@ The following variables are used in the Linear Programming problem:
 
 \begin{aligned}
 & \text{Let} & I & = \text{No. of locations} \\
-& & K & = \text{No. of engineers} \\
+& & K & = \text{No. of travelling agents} \\
 & & x & = \text{Allocation matrix} \\
 & & v & = \text{Travel costs matrix} \\
 & & d & = \text{Job costs vector} \\
@@ -45,19 +44,19 @@ The following variables are used in the Linear Programming problem:
 & & p & = \text{Depots vector} \\
 \end{aligned}
 
-- The system contains \(I\) number of engineers and \(K\) number of locations to visit. For each engineer, the start location is usually his/her home address which is the included in \(I\).
+- The system contains \(I\) number of travelling agents and \(K\) number of locations to visit. For each agent, the start location is usually his/her home address which is the included in \(I\).
 
-- The allocation matrix \(x\) is a binary flag where \(x_{ii^\prime k} = 1\) if the \(k\)<sup>th</sup> engineer is to travel from location \(i\) to location \(i^\prime\).
+- The allocation matrix \(x\) is a binary flag where \(x_{ii^\prime k} = 1\) if the \(k\)<sup>th</sup> agent is to travel from location \(i\) to location \(i^\prime\).
 
-- Travel cost \(v_{ii^\prime}\) is the time elapsed when engineer moves from location \(i\) to \(i^\prime\). 
+- Travel cost \(v_{ii^\prime}\) is the time elapsed when agent moves from location \(i\) to \(i^\prime\). 
 
 - Job cost \(d_i\) is a vector of length \(I\) indicating the time elapsed when completing job at location \(i\). 
 
-- Offset \(f_k\) is a vector of length \(K\) containing the hours offset (since midmight) for the \(k\)<sup>th</sup> engineer. (This is basically the starting time).
+- Offset \(f_k\) is a vector of length \(K\) containing the hours offset (since midmight) for the \(k\)<sup>th</sup> agent (This is basically the starting time).
 
-- Capacity \(c_k\) is also a vector of length \(K\), which defines the contracted working hours of the \(k\)<sup>th</sup> engineer.
+- Capacity \(c_k\) is also a vector of length \(K\), which defines the contracted working hours of the \(k\)<sup>th</sup> agent.
 
-- Depot variable \(p\) is a vector of length \(K\) indicating the id of depots, where \(p_k \in \{1,2,3,...,I\}\) is the depot of the \(k\)<sup>th</sup> engineer.
+- Depot variable \(p\) is a vector of length \(K\) indicating the id of depots, where \(p_k \in \{1,2,3,...,I\}\) is the depot of the \(k\)<sup>th</sup> agent.
 
 ```{r}
 set.seed(12345)
@@ -65,13 +64,13 @@ set.seed(12345)
 # Number of locations
 I <- 14
 
-# Number of engineers
+# Number of travelling agents
 K <- 3
 
-# Hours offset for each engineer
+# Hours offset for each agent
 offsets <- sample(c(7:10), K, replace = TRUE)
 
-# Capacity for each engineer
+# Capacity for each agent
 capacities <- sample(c(8:12), K, replace = TRUE)
 
 # Generate random locations (x-y coordinates) and job costs
@@ -104,7 +103,7 @@ Show the randomly selected depots:
 depots
 ```
 
-The problem can be easily summarised in the following plot. It shows the start locations (depots) of each engineers, as well as a set of jonbs which have to be completed in the day. The objective is to identify the shortest routes for engineers, making sure that they begin the journey at start location and return there once the day is done.
+The problem can be easily summarised in the following plot. It shows the start locations (depots) of each agent, as well as a set of jobs which have to be completed in the day. The objective is to identify the total shortest routes for all agents, making sure that they begin the journey at start location and return there once the day is done.
 
 ```{r}
 ggplot(locations, aes(x,y)) +
@@ -115,7 +114,7 @@ ggplot(locations, aes(x,y)) +
   geom_point(aes(shape=is_depot), size=3)+
   geom_label_repel(aes(label=id)) +
   labs(shape= "Start Location",
-       colour = "Engineer",
+       colour = "Agent",
        x=NULL, y=NULL)  + 
   guides(x = "none", y = "none") +
   scale_colour_brewer(type = "qual", palette = 2)
@@ -196,7 +195,7 @@ model <- MILPModel() %>%
                          i_ = 1:I,
                          k = 1:K), "min") %>%
   
-  # Total travel and i_ob costs must not exceed engineer capacity
+  # Total travel and i_ob costs must not exceed agent capacity
   add_constraint(sum_expr(colwise(travel_costs_func(i, i_)) * x[i, i_, k] +
                             colwise(job_costs_func(i_)) * x[i, i_, k],
                           i = 1:I,
@@ -280,7 +279,7 @@ system.time({
 
 # Extract solution
 
-Once a solution is found for the LP problem, the solution is extracted. Binary variable `x` is the allocation matrix indicating the travel routes for all engineers.
+Once a solution is found for the LP problem, the solution is extracted. Binary variable `x` is the allocation matrix indicating the travel routes for all agents.
 
 ```{r}
 x <- get_solution(result, x[i, i_, k]) %>%
@@ -305,9 +304,9 @@ routes <- u %>%
 
 # Convert solution into graph
 
-Since the routes will always begin at the engineer's start locations (i.e. depots), we will need to identify the route in the correct order. To do this, we convert the route into an `igraph` object and find all the paths depaerting from the depot vertex using the funciton `all_simple_paths()`. The complete route is the longest route (i.e. the one returning to the depot).
+Since the routes will always begin at the agent's start locations (i.e. depots), we will need to identify the route in the correct order. To do this, we convert the route into an `igraph` object and find all the paths departing from the depot vertex using the function `all_simple_paths()`. The complete route is the longest route (i.e. the one returning to the depot).
 
-We will convert the route into a more meaningful `scheudle` data frame where the series of tasks can be visualised. Engineers will perform job at location \(i\) whilst incurring the cost here, then travel to the next location \(i^\prime\) and bear the travel cost. The task order is identified using the `id` column. Since the fist job is always the offset block with cost \(f_k\), this is taken off from the schedule. An additional `spare` block is appended to th eend of day if the engineer's total travel and job time is below the contracted capacity hours.
+We will convert the route into a more meaningful `scheudle` data frame where the series of tasks can be visualised. Agents will perform job at location \(i\) whilst incurring the cost here, then travel to the next location \(i^\prime\) and bear the travel cost. The task order is identified using the `id` column. Since the fist job is always the offset block with cost \(f_k\), this is taken off from the schedule. An additional `spare` block is appended to the end of day if the agent's total travel and job time is below the contracted capacity hours.
 
 ```{r}
 schedule <- do.call(bind_rows, lapply(1:K, function(k_){
@@ -315,12 +314,12 @@ schedule <- do.call(bind_rows, lapply(1:K, function(k_){
     filter(k==k_) %>%
     arrange(u)
   
-  # Engineer performs job at location i
+  # Agent performs job at location i
   jobs <- routes_subset %>% 
     transmute(k, task = paste0("Job ", i), cost = job_cost, 
               id = row_number() + 0, type="job") 
   
-  # Engineer will travel from location i to i'
+  # Agent will travel from location i to i'
   trips <- routes_subset %>% 
     transmute(k, task = paste0(i, "->",i_), cost = travel_cost, 
               id = row_number() + 0.1, type="travel")
@@ -356,8 +355,8 @@ schedule
 Summarise the optimised schedule:
 
 ```{r}
-# Summary of each engineer
-engineer_summary <- schedule %>%
+# Summary of each agent
+agent_summary <- schedule %>%
   group_by(k) %>%
   summarise(start_time = min(start_time),
             end_time = max(end_time)) %>%
@@ -367,12 +366,12 @@ engineer_summary <- schedule %>%
                pivot_wider(names_from = type, values_from = cost), 
              by="k")
 
-engineer_summary
+agent_summary
 ```
 
 # Visualisation
 
-The schedule can be visualised as a Gantt chart. It shows the optimal order of job for all engineers.
+The schedule can be visualised as a Gantt chart. It shows the optimal order of job for all agents
 
 ```{r, fig.width=10, fig.height=4}
 # Create a Gantt chart
@@ -385,14 +384,14 @@ ggplot() +
   geom_label(data = filter(schedule, type=="job"),
              mapping = aes(x=(start_time+end_time)/2, y=k,label = task),
              size=3) +
-  geom_text(data = engineer_summary,
+  geom_text(data = agent_summary,
             mapping = aes(x=end_time + 0.1,
                           y = k,
                           label=sprintf("Job: %.1f h\nTravel:%.1f h\nSpare:%.1f h",
                                         job,travel, spare)),size=3,hjust =0) +
   xlim(c(0, 24)) +
   labs(x="Time", 
-       y="Engineer", 
+       y="Agent", 
        colour="Task type") +
   scale_colour_brewer(type = "qual", palette = 2) +
   scale_x_continuous(breaks = seq(0, 24, by = 2))
@@ -408,7 +407,7 @@ ggplot(routes, aes(x, y, xend=xend, yend=yend)) +
            curvature=0, size=1,
            arrow = arrow(length = unit(0.4, "cm")))+
   geom_label_repel(aes(label=i)) +
-  labs(colour = "Engineer", 
+  labs(colour = "Agent", 
        shape =  "Start Location",
        x = NULL, y = NULL) +
   scale_colour_brewer(type = "qual", palette = 2)
