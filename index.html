@@ -360,23 +360,22 @@ Job Scheduling</h1>
 
 <div id="abstract" class="section level1">
 <h1>Abstract</h1>
-<p>Efficiently managing travel and job scheduling for multiple resources
-across various locations presents a significant operational challenge.
-This tutorial showcases a Linear Programming (LP) model designed to
-optimise route planning and job allocation among travelling agents,
-aiming to minimise travel time and adhere to individual working hours
-constraints. Utilising variables such as travel costs, job durations,
-and agent capacities, we construct a mathematical framework that
-accommodates each agent’s starting location and individual contractual
-obligations. The methodology employs the <code>MILPModel</code> in R,
-leveraging the <code>symphony</code> solver to identify optimal
-scheduling solutions. Experimental results, visualised through Gantt
-charts and geographical plotting, demonstrate the model’s efficacy in
-reducing total travel time while ensuring feasible workload
-distribution. This approach not only enhances operational efficiency but
-also contributes to the broader field of operations research by
-providing a scalable solution for multi-location, multi-personnel
-scheduling problems.</p>
+<p>Efficiently managing travel and job scheduling for multiple
+travelling agents across various locations presents a significant
+operational challenge. We use a Linear Programming (LP) model designed
+to optimise route planning and job allocation among agents, aiming to
+minimise travel time and adhere to individual working hours constraints.
+Utilising variables such as travel costs, job durations, and resource
+capacities, we construct a mathematical framework that accommodates each
+agent’s starting location and contractual obligations. Experimental
+results, visualised through Gantt charts and geographical plotting,
+demonstrate the model’s efficacy in reducing total travel time while
+ensuring equitable workload distribution. This approach not only
+enhances operational efficiency but also contributes to the broader
+field of operations research by providing a scalable solution for
+multi-location, multi-personnel scheduling problems.</p>
+<p>This tutorial is modified from the well-known Multiple Traveling
+Salesman Problem (m-TSP).</p>
 <pre class="r"><code>library(knitr)
 library(dplyr)
 library(tidyr)
@@ -673,7 +672,7 @@ system.time({
                                         ))
 })</code></pre>
 <pre><code>##    user  system elapsed 
-##    2.96    0.00    2.95</code></pre>
+##    2.75    0.05    2.87</code></pre>
 </div>
 <div id="extract-solution" class="section level1">
 <h1>Extract solution</h1>
