@@ -1,6 +1,6 @@
 ---
 title: "Job Scheduling for Multiple Engineers"
-author: Timothy Wong^[British Gas, timothy.wong@hotmail.co.uk]
+author: Timothy Wong^[timothy.wong@hotmail.co.uk]
 output: html_document
 date: "2022-02-16"
 header-includes:
@@ -23,6 +23,8 @@ library(ompr)
 library(ompr.roi)
 library(ROI)
 library(ROI.plugin.glpk)
+#library(ROI.plugin.cbc)
+library(ROI.plugin.symphony)
 library(igraph)
 library(ggplot2)
 library(ggrepel)
@@ -58,7 +60,7 @@ The following variables are used in the Linear Programming problem:
 - Depot variable \(p\) is a vector of length \(K\) indicating the id of depots, where \(p_k \in \{1,2,3,...,I\}\) is the depot of the \(k\)<sup>th</sup> engineer.
 
 ```{r}
-set.seed(123)
+set.seed(12345)
 
 # Number of locations
 I <- 14
@@ -67,10 +69,10 @@ I <- 14
 K <- 3
 
 # Hours offset for each engineer
-offsets <- c(6, 8, 8)
+offsets <- sample(c(7:10), K, replace = TRUE)
 
 # Capacity for each engineer
-capacities <- c(11, 10, 9)
+capacities <- sample(c(8:12), K, replace = TRUE)
 
 # Generate random locations (x-y coordinates) and job costs
 # Job costs are randomly generated form a Poisson distribution.
@@ -170,7 +172,6 @@ The Linear Programming problem is formulated as below. It is modified from the M
 The LP problem is expressed in `R`using the code chunk below. The experimental function `MILPModel()` is used to speed up computation, it is subject to future [API changes](https://dirkschumacher.github.io/ompr/reference/MILPModel.html).
 
 ```{r}
-
 travel_costs_func <- function(i, i_) {
   vapply(seq_along(i), function(k) travel_costs[i[k], i_[k]], numeric(1L))
 }
@@ -199,7 +200,7 @@ model <- MILPModel() %>%
   add_constraint(sum_expr(colwise(travel_costs_func(i, i_)) * x[i, i_, k] +
                             colwise(job_costs_func(i_)) * x[i, i_, k],
                           i = 1:I,
-                          i_ = 1:I) <= offsets[k] + capacities[k], 
+                          i_ = 1:I) <= colwise(offsets[k]) + colwise(capacities[k]), 
                  k=1:K) %>%
   
   # you cannot go to the same city
@@ -211,16 +212,16 @@ model <- MILPModel() %>%
   add_constraint(sum_expr(x[depots[k], i_, k],
                           i_ = 1:I) == 1,
                  k = 1:K) %>%
-  
+
   # each salesman needs to come back to the depot
-  add_constraint(sum_expr(x[i, depots[k], k], 
+  add_constraint(sum_expr(x[i, depots[k], k],
                           i = 1:I) == 1,
                  k = 1:K) %>%
   
-  # if a salesman comes to a city he has to leave it as well
+  # # if a salesman comes to a city he has to leave it as well
   add_constraint(sum_expr(x[i_, i, k], i_ = 1:I) == sum_expr(x[i, i_, k], i_ = 1:I), 
-                 i = 1:I,
-                 k = 1:K) %>%
+                i = 1:I,
+                k = 1:K) %>%
   
   # leave each city with only one salesman
   add_constraint(sum_expr(x[i, i_, k], i_ = 1:I, k = 1:K) == 1, i = 1:I) %>%
@@ -234,21 +235,46 @@ model <- MILPModel() %>%
 
 # Add MTZ constraints for each k worker
 # ensure no subtours (arc constraints)
-for (z in 1:K) {
+for (k_ in 1:K) {
+  
+  my_depot <- depots[k_]
+    
   model <- model %>%
-    add_constraint(u[i, k] >= 2, i = (1:I)[-depots[z]], k = z) %>%
+    # # each salesman needs to leave the depot
+    # add_constraint(sum_expr(x[my_depot, i_, k_],
+    #                         i_ = 1:I) == 1) %>%
+    # 
+    # # each salesman needs to come back to the depot
+    # add_constraint(sum_expr(x[i, my_depot, k_],
+    #                         i = 1:I) == 1) %>%
+  
+    add_constraint(u[i, k] >= 2, i = (1:I)[-my_depot], k = k_) %>%
     add_constraint(u[i, k] - u[i_, k] + 1 <= (I - 1) * (1 - x[i, i_, k]), 
-                   i = (1:I)[-depots[z]], i_ = (1:I)[-depots[z]], k = z)
+                   i = (1:I)[-my_depot], i_ = (1:I)[-my_depot], k = k_)
 }
 ```
 
-Solve the problem using `symphony` solver. The `time_limit` parameter is used to control maximum execution time. Optional parameter `gap_limit` can be used for early-stopping.
+Solve the problem using the `cbc` solver. The full list of parameter can be found [here](https://projects.coin-or.org/CoinBinary/export/1059/OptimizationSuite/trunk/Installer/files/doc/cbcCommandLine.pdf).
+
+Alternatively the `symphony` solver can be used. The `time_limit` parameter is used to control maximum execution time. Optional parameter `gap_limit` can be used for early-stopping.
 
 ```{r, echo=TRUE}
-result <- solve_model(model, with_ROI(solver = "symphony",
-                                      verbosity = -1, 
-                                      #gap_limit = 2,
-                                      time_limit = 60))
+# system.time({
+#   result <- solve_model(model, with_ROI(solver = "glpk"
+#                                         #sec = 1,
+#                                         #ratio = 0
+#                                         #maxN = 1000
+#                                         #maxso = 1
+#                                         ))
+# })
+
+system.time({
+  result <- solve_model(model, with_ROI(solver = "symphony",
+                                        verbosity = -1,
+                                        gap_limit = 5,
+                                        time_limit = 60 * 20
+                                        ))
+})
 ```
 
 
@@ -257,16 +283,21 @@ result <- solve_model(model, with_ROI(solver = "symphony",
 Once a solution is found for the LP problem, the solution is extracted. Binary variable `x` is the allocation matrix indicating the travel routes for all engineers.
 
 ```{r}
-solution <- get_solution(result, x[i, i_, k]) %>%
-  filter(value == 1) %>%
-  select(-variable, -value) %>%
+x <- get_solution(result, x[i, i_, k]) %>%
+  select(i, i_, k, x=value) %>%
+  filter(x == 1) %>%
+  select(-x) %>%
   as_tibble()
 
+u <- get_solution(result, u[i, k]) %>%
+  select(i,k,u=value) %>%
+  inner_join(x, by=c("i", "k")) %>%
+  as_tibble()
 
-solution$travel_cost <- apply(solution, 1, function(r){ travel_costs[as.integer(r["i"]), as.integer(r["i_"])] })
-solution$job_cost <- locations$cost[solution$i]
+u$travel_cost <- apply(u, 1, function(r){ travel_costs[as.integer(r["i"]), as.integer(r["i_"])] })
+u$job_cost <- locations$cost[locations$id[u$i]]
 
-routes <- solution %>%
+routes <- u %>%
   inner_join(select(locations, id,x=x,y=y, is_depot), by=c("i"= "id")) %>%
   inner_join(select(locations, id,xend=x,yend=y), by=c("i_"= "id"))
 ```
@@ -279,12 +310,10 @@ Since the routes will always begin at the engineer's start locations (i.e. depot
 We will convert the route into a more meaningful `scheudle` data frame where the series of tasks can be visualised. Engineers will perform job at location \(i\) whilst incurring the cost here, then travel to the next location \(i^\prime\) and bear the travel cost. The task order is identified using the `id` column. Since the fist job is always the offset block with cost \(f_k\), this is taken off from the schedule. An additional `spare` block is appended to th eend of day if the engineer's total travel and job time is below the contracted capacity hours.
 
 ```{r}
-g <- graph_from_data_frame(rename(solution, from=i, to=i_))
-
-schedule <- do.call(bind_rows, lapply(1:K, function(k){
-  all_paths <- all_simple_paths(g, as.character(depots[k]))
-  routes_subset <- solution[as.integer(all_paths[[length(all_paths)]]), ]
-  
+schedule <- do.call(bind_rows, lapply(1:K, function(k_){
+  routes_subset <- u %>%
+    filter(k==k_) %>%
+    arrange(u)
   
   # Engineer performs job at location i
   jobs <- routes_subset %>% 
@@ -300,15 +329,15 @@ schedule <- do.call(bind_rows, lapply(1:K, function(k){
     arrange(id, type) %>%
     mutate(id = row_number(),
            end_time = cumsum(cost),
-           start_time = lag(end_time, 1,default = 0)) %>%
+           start_time = lag(end_time, 1, default = 0)) %>%
     filter(!(type =="job" & id == 1)) %>%
     mutate(id = row_number())
   
   last_job <- max(route$end_time)
-  end_time <- (offsets + capacities)[k]
+  end_time <- (offsets + capacities)[k_]
   
   if(last_job < end_time) {
-    route %>% add_row(tibble(k=k, 
+    route <- route %>% add_row(tibble(k=k_, 
                              task = "spare", 
                              cost = end_time - last_job, 
                              id= max(route$id)+1,
@@ -316,6 +345,8 @@ schedule <- do.call(bind_rows, lapply(1:K, function(k){
                              start_time = last_job, 
                              end_time = end_time))
   }
+  
+  route
 })) %>%
   mutate(type = factor(type, levels = c("job", "travel", "spare")))
 
@@ -343,7 +374,7 @@ engineer_summary
 
 The schedule can be visualised as a Gantt chart. It shows the optimal order of job for all engineers.
 
-```{r, fig.width=10, fig.height=3}
+```{r, fig.width=10, fig.height=4}
 # Create a Gantt chart
 ggplot() +
   geom_linerange(data = schedule, 
